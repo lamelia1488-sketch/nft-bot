@@ -1,0 +1,75 @@
+import json
+import urllib.request
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+
+BOT_TOKEN = "9188530781:AAEE1IwMDKWSMb28XkCD53euLyp_5OGHDBQ"
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
+
+def send_request(method, payload):
+    url = API_URL + method
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode())
+    except Exception:
+        return None
+
+def bot_loop():
+    print("Бот запущен в облаке!")
+    offset = 0
+    while True:
+        try:
+            res = send_request("getUpdates", {"offset": offset, "timeout": 30})
+            if not res or not res.get("ok"):
+                time.sleep(2)
+                continue
+                
+            for update in res["result"]:
+                offset = update["update_id"] + 1
+                if "message" in update and "text" in update["message"]:
+                    if update["message"]["text"] == "/start":
+                        send_request("sendMessage", {
+                            "chat_id": update["message"]["chat"]["id"],
+                            "text": "Привет! Я бот для офферов.\n\nНапиши в чате @имя_бота и данные для оффера."
+                        })
+                
+                if "inline_query" in update:
+                    query = update["inline_query"]
+                    q_text = query["query"].strip()
+                    parts = q_text.split()
+                    stars = parts[0] if len(parts) >= 1 and parts[0].isdigit() else "900"
+                    time_limit = "6 ч. 0 мин."
+                    if len(parts) >= 2:
+                        t = parts[1].lower()
+                        if t.endswith("h"): time_limit = f"{t[:-1]} ч. 0 мин."
+                        elif t.endswith("m"): time_limit = f"0 ч. {t[:-1]} мин."
+                    accept_link = parts[2] if len(parts) >= 3 and parts[2].startswith("http") else "https://t.me/"
+
+                    result_text = f"<b>Пользователь предлагает вам {stars} ⭐ Stars за подарок 🔮 Mirage Lamp.</b>\n\nОффер действителен ещё <b>{time_limit}</b>"
+                    results = [{
+                        "type": "article", "id": "1", "title": "Сгенерировать оффер",
+                        "description": f"{stars} Stars | {time_limit}",
+                        "input_message_content": {"message_text": result_text, "parse_mode": "HTML"},
+                        "reply_markup": {"inline_keyboard": [[{"text": "✖️ Отклонить", "callback_data": "decline"}, {"text": "✅ Принять", "url": accept_link}]]}
+                    }]
+                    send_request("answerInlineQuery", {"inline_query_id": query["id"], "results": results, "cache_time": 1})
+
+                if "callback_query" in update and update["callback_query"]["data"] == "decline":
+                    cb = update["callback_query"]
+                    send_request("answerCallbackQuery", {"callback_query_id": cb["id"], "text": "Оффер отклонен."})
+                    send_request("editMessageText", {"chat_id": cb["message"]["chat"]["id"], "message_id": cb["message"]["message_id"], "text": "❌ Вы отклонили оффер."})
+        except Exception:
+            time.sleep(2)
+
+threading.Thread(target=bot_loop, daemon=True).start()
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+HTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
